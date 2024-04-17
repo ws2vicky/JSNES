@@ -1,0 +1,99 @@
+buildscript {
+    repositories {
+        maven { url("https://maven.aliyun.com/repository/public") }
+        maven { url("https://maven.aliyun.com/repository/spring") }
+        maven { url("https://maven.aliyun.com/repository/mapr-public") }
+        maven { url("https://maven.aliyun.com/repository/spring-plugin") }
+        maven { url("https://maven.aliyun.com/repository/gradle-plugin") }
+        maven { url("https://maven.aliyun.com/repository/google") }
+        maven { url("https://maven.aliyun.com/repository/jcenter") }
+    }
+}
+
+plugins {
+    id "de.undercouch.download" version "4.1.1"
+}
+
+def mainVersion = "1.0.0"
+Map<String, String> envMap = new HashMap<>(System.getenv())
+def imageRepository = envMap.getOrDefault("IMAGE_REPOSITORY ", "wangz2019/jsnes")
+String imageWithTag = "${imageRepository}:${mainVersion}"
+File runtimeDockerDirectory = project.file("${project.buildDir}/runtime/docker")
+
+task buildDockerImage() {
+    doFirst {
+        runtimeDockerDirectory.mkdirs()
+        runtimeDockerDirectory.delete()
+        copy {
+            from project.file("docker")
+            into runtimeDockerDirectory
+        }
+        copy {
+            from project.file("lib")
+            into "${runtimeDockerDirectory}/lib"
+        }
+        copy {
+            from project.file("src")
+            into "${runtimeDockerDirectory}/src"
+        }
+        copy {
+            from project.file("roms")
+            into "${runtimeDockerDirectory}/roms"
+        }
+    }
+    doLast {
+        exec {
+            commandLine(
+                    "docker", "build",
+                    "--rm",
+                    "-f", project.file("${runtimeDockerDirectory.getAbsolutePath()}/Dockerfile"),
+                    "-t", imageWithTag,
+                    runtimeDockerDirectory,
+            )
+        }
+    }
+}
+
+task pushDockerImage() {
+    doLast {
+        exec {
+            commandLine(
+                    "docker", "buildx", "build",
+                    "--platform", "linux/amd64,linux/arm64,linux/arm/v7",
+                    "--rm",
+                    "-f", project.file("${runtimeDockerDirectory.getAbsolutePath()}/Dockerfile"),
+                    "-t", imageWithTag,
+                    "--push",
+                    runtimeDockerDirectory,
+            )
+        }
+    }
+    dependsOn(buildDockerImage)
+}
+
+def containerName = "jsnes"
+def port = 8081
+task runDockerContainer(type: Exec) {
+    doFirst {
+        println("running command: ${String.join(" ", getCommandLine())}")
+    }
+    executable("docker")
+    args(
+            "run", "--rm",
+            "-p", "${port}:80",
+            "--name", containerName,
+            "-d", imageWithTag,
+    )
+    doLast {
+        println("visit http://localhost:${port}")
+    }
+}
+
+task stopDockerContainer(type: Exec) {
+    executable("docker")
+    args(
+            "stop", containerName
+    )
+}
+
+apply from: project.file("docs.nginx.gradle")
